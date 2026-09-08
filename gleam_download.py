@@ -4,7 +4,8 @@ The server lays the data out as ``data/<version>/<resolution>/.../<file>.nc``,
 where daily files sit under a year directory and monthly/yearly files sit under
 a variable directory. In every case the variable is encoded in the filename, so
 it is parsed from there and the local tree is rebuilt as
-``<download>/<resolution>/<variable>/<file>.nc`` regardless of remote layout.
+``<download>/<version>/raw/<resolution>/<variable>/<file>.nc`` regardless of
+remote layout, with the version written as ``v_4_3_a`` rather than ``v4.3a``.
 
 Which files are fetched is driven by the config: ``version``, the list of
 ``temporal_resolutions``, and ``variables`` (a list, or ``all``). Files are
@@ -45,6 +46,8 @@ PASSWORD = 'GLEAM4#h-cel_111'
 REMOTE_ROOT = 'data'
 # 'Ep_rad_1980_GLEAM_v4.3a.nc' -> 'Ep_rad'; greedy so multi-part names survive
 FILENAME_RE = re.compile(r'^(?P<variable>.+)_\d{4}_GLEAM_')
+# 'v4.3a' -> ('4', '3', 'a'), the pieces of the local directory name
+VERSION_RE = re.compile(r'^v(?P<major>\d+)\.(?P<minor>\d+)(?P<letter>[a-z])$')
 # processName keeps the workers apart in the shared console stream
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(processName)s %(name)s: %(message)s'
 
@@ -97,6 +100,39 @@ def parse_variable(filename):
     return match.group('variable') if match else None
 
 
+def format_version(version):
+    """Rewrite a GLEAM version for use as a directory name.
+
+    Args:
+        version (str): Version as written in the config, e.g. 'v4.3a'.
+
+    Returns:
+        str: The version with '.' dropped and the parts underscore separated,
+            e.g. 'v_4_3_a'.
+
+    Raises:
+        ValueError: If the version is not of the form 'v<major>.<minor><letter>'.
+    """
+    match = VERSION_RE.match(version)
+    if match is None:
+        raise ValueError(f"cannot parse version {version!r}, expected e.g. 'v4.3a'")
+    return 'v_{major}_{minor}_{letter}'.format(**match.groupdict())
+
+
+def download_root(settings):
+    """Root of the local tree for the configured version.
+
+    Args:
+        settings (dict): The loaded configuration.
+
+    Returns:
+        str: e.g. '<download>/v_4_3_a/raw'.
+    """
+    return os.path.join(
+        settings['directories']['download'], format_version(settings['version']), 'raw'
+    )
+
+
 def list_files(sftp, settings, resolution):
     """List the files to download for one temporal resolution.
 
@@ -125,7 +161,7 @@ def list_files(sftp, settings, resolution):
             continue
         # flat local layout: the remote year directories are dropped
         local_path = os.path.join(
-            settings['directories']['download'], resolution, variable, entry.filename
+            download_root(settings), resolution, variable, entry.filename
         )
         # st_size is kept so downloads can be skipped and verified later
         files.append((path, local_path, entry.st_size))
@@ -291,7 +327,7 @@ def verify_downloads(jobs):
 
 def main(settings):
 
-    os.makedirs(settings['directories']['download'], exist_ok=True)
+    os.makedirs(download_root(settings), exist_ok=True)
     os.makedirs(settings['directories']['logs'], exist_ok=True)
     log_file = os.path.join(settings['directories']['logs'], settings['log_file'])
     setup_logging(log_file, fmt=LOG_FORMAT)
@@ -321,7 +357,7 @@ def main(settings):
     jobs = [(index, len(jobs), *job) for index, job in enumerate(jobs, start=1)]
 
     # clear debris from any previous run before the workers start writing
-    cleanup_partial_files(settings['directories']['download'])
+    cleanup_partial_files(download_root(settings))
 
     n_processes = min(settings['n_processes'], len(jobs)) or 1
     LOG.info(
@@ -337,9 +373,9 @@ def main(settings):
         # covers ctrl-c too; the pool has terminated and joined its workers by
         # the time this runs, so nothing is still writing to a .part file
         LOG.error(f'download interrupted ({type(error).__name__}), cleaning up before exiting')
-        cleanup_partial_files(settings['directories']['download'])
+        cleanup_partial_files(download_root(settings))
         raise
-    cleanup_partial_files(settings['directories']['download'])
+    cleanup_partial_files(download_root(settings))
 
     for (index, _, remote_path, _, _), ok in zip(jobs, results):
         if not ok:
