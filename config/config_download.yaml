@@ -1,0 +1,9 @@
+directories:
+  download: /glade/derecho/scratch/kheyblom/data/gleam/
+  logs: ./logs
+log_file: gleam_download.log
+n_processes: 8
+version: v4.3a
+variables: all
+temporal_resolutions:
+  - daily
