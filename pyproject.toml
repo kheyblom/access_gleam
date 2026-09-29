@@ -1,7 +1,7 @@
 [project]
 name = "gleam_access"
 version = "0.1.0"
-requires-python = ">=3.14"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "cftime>=1.6.5",
     "dask>=2026.1.2",
@@ -15,3 +15,8 @@ dependencies = [
     "xarray>=2026.2.0",
     "zarr>=3.1.5",
 ]
+
+[tool.uv]
+# only ever build the venv on a uv-managed interpreter; otherwise uv falls back
+# to any matching python on PATH (e.g. miniconda), which the venv then depends on
+python-preference = "only-managed"
